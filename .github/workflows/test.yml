@@ -1,0 +1,72 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      upgrade_from:
+        description: "Version to upgrade from"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Update Homebrew
+        run: brew update
+
+      - name: Link tap
+        run: mkdir -p "$(brew --repository)/Library/Taps/cloudblue-digital" && ln -s "$GITHUB_WORKSPACE" "$(brew --repository)/Library/Taps/cloudblue-digital/homebrew-tap"
+
+      - name: Style check
+        run: brew style --cask cloudblue-digital/tap/ark
+
+      - name: Audit check
+        run: brew audit --cask --strict --online cloudblue-digital/tap/ark
+
+      - name: Install and verify
+        run: |
+          brew install --cask cloudblue-digital/tap/ark
+          test -d /Applications/Ark.app
+          xattr -p com.apple.quarantine /Applications/Ark.app
+          codesign --verify --deep --strict --verbose=2 /Applications/Ark.app
+          spctl -a -vv /Applications/Ark.app 2>&1 | tee /dev/stderr | grep -q 'source=Notarized Developer ID'
+          xcrun stapler validate /Applications/Ark.app
+          test "$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" /Applications/Ark.app/Contents/Info.plist)" = "$(sed -n 's/^[[:space:]]*version "\(.*\)"/\1/p' Casks/ark.rb)"
+          brew uninstall --cask cloudblue-digital/tap/ark
+          test ! -e /Applications/Ark.app && echo "uninstall check: app removed"
+
+      - name: Upgrade check
+        env:
+          UPGRADE_FROM: ${{ inputs.upgrade_from }}
+        run: |
+          CURRENT_VERSION="$(sed -n 's/^[[:space:]]*version "\(.*\)"/\1/p' Casks/ark.rb)"
+          OLD_VERSION="${UPGRADE_FROM:-}"
+          if [ -z "$OLD_VERSION" ]; then
+            PREV_VERSION="$(git show HEAD~1:Casks/ark.rb 2>/dev/null | sed -n 's/^[[:space:]]*version "\(.*\)"/\1/p' || true)"
+            if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" != "$CURRENT_VERSION" ]; then
+              OLD_VERSION="$PREV_VERSION"
+            fi
+          fi
+
+          if [ -z "$OLD_VERSION" ]; then
+            echo "upgrade check skipped: no earlier version"
+          else
+            sed -i '' -e "s/version \".*\"/version \"${OLD_VERSION}\"/" -e 's/sha256 \".*\"/sha256 :no_check/' Casks/ark.rb
+            brew install --cask cloudblue-digital/tap/ark
+            git checkout -- Casks/ark.rb
+            brew outdated --cask --quiet | grep -Eq '(^|/)ark$'
+            brew upgrade --cask cloudblue-digital/tap/ark
+            test "$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" /Applications/Ark.app/Contents/Info.plist)" = "$CURRENT_VERSION"
+            echo "upgrade check: ${OLD_VERSION} -> ${CURRENT_VERSION}"
+            brew uninstall --cask cloudblue-digital/tap/ark
+            test ! -e /Applications/Ark.app
+          fi

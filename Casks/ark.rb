@@ -1,6 +1,6 @@
 cask "ark" do
-  version "0.22.0"
-  sha256 "deaed4fbf37efff47d4a32367cbb6bacf15a7866c48bad286a4874692f3cba95"
+  version "0.23.0"
+  sha256 "fe51ee4634c0b052f935c829d5a70c96942eea0c1639201eaf7576997243ded5"
 
   url "https://relay.cloudbluedigital.co.uk/r/downloads/ark/#{version}/darwin-dmg/arm64"
   name "Ark"
